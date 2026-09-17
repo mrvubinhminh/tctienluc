@@ -501,6 +501,9 @@
     .q-head{flex-direction:column;align-items:flex-start;gap:6px;}
     .q-stem{padding-top:0;}
     .qed-title-label{display:none;}
+    .rs-stats-grid{grid-template-columns:repeat(2,1fr);}
+    .rs-hero{padding:22px 16px;}
+    .rs-hero-score{font-size:2.3rem;}
     .setup-wrap{padding:20px 10px 150px;}
     .q-body{flex-direction:column;}
     .options.grid2{grid-template-columns:1fr;}
@@ -673,6 +676,28 @@
   .st-stats-row.bad b{color:var(--red1);}
   .st-stats-row.mid b{color:#b06a12;}
   .st-section{max-width:860px;width:100%;margin:0 auto 22px;}
+
+  /* ---- Bảng tổng kết hiện đại (chế độ học sinh làm từ xa) ---- */
+  .rs-summary{display:flex;flex-direction:column;gap:16px;}
+  .rs-hero{border-radius:18px;padding:26px 22px;text-align:center;color:#fff;position:relative;overflow:hidden;}
+  .rs-hero.rs-great{background:linear-gradient(135deg,var(--blue1),var(--violet1) 60%,var(--violet2));}
+  .rs-hero.rs-retry{background:linear-gradient(135deg,var(--orange1),var(--red2) 70%,var(--red1));}
+  .rs-badge-pill{display:inline-block;background:rgba(255,255,255,.22);backdrop-filter:blur(2px);border-radius:999px;padding:5px 14px;font-size:.78rem;font-weight:700;letter-spacing:.02em;margin-bottom:10px;}
+  .rs-hero-emoji{font-size:2.6rem;line-height:1;margin-bottom:4px;}
+  .rs-hero-score{font-size:2.8rem;font-weight:900;line-height:1;text-shadow:0 2px 8px rgba(0,0,0,.15);}
+  .rs-hero-score span{font-size:1.3rem;font-weight:700;opacity:.85;}
+  .rs-hero-name{font-size:.95rem;font-weight:700;margin-top:8px;opacity:.95;}
+  .rs-hero-msg{font-size:.88rem;line-height:1.5;margin-top:10px;max-width:480px;margin-left:auto;margin-right:auto;opacity:.97;}
+  .rs-stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+  .rs-stat{background:#f6f8fc;border:1px solid var(--border);border-radius:12px;padding:12px 8px;text-align:center;}
+  .rs-stat-value{font-size:1.25rem;font-weight:800;color:var(--ink);}
+  .rs-stat-label{font-size:.72rem;color:var(--ink-soft);margin-top:2px;}
+  .rs-breakdown .st-stats-rows{max-height:220px;}
+  .rs-send-wrap{text-align:center;padding-top:4px;}
+  .rs-send-btn{font-size:.95rem;padding:12px 28px;}
+  .rs-send-note{font-size:.82rem;color:var(--ink-soft);margin-top:10px;line-height:1.5;}
+  .rs-send-note.rs-send-ok{color:var(--green1);font-weight:700;}
+  .rs-send-note.rs-send-err{color:var(--red1);font-weight:700;}
   .st-part-head{font-weight:800;font-size:.9rem;text-transform:uppercase;letter-spacing:.3px;color:#38507a;margin:0 0 12px;}
   .st-card{background:#fff;border-radius:16px;padding:18px 20px;margin-bottom:14px;box-shadow:0 2px 12px rgba(20,30,60,.06);}
   .st-solution-btn{margin-top:12px;background:none;border:none;color:var(--blue1);font-weight:700;font-size:.85rem;cursor:pointer;padding:0;}
@@ -2172,6 +2197,11 @@ let stStudentName = '';
 let stStudentClass = '';
 let stStarted = false;
 let stMode = 'local'; // 'local' = thầy tự kiểm tra ngay trên dữ liệu vừa nhập; 'remote' = học sinh vào từ màn chào mừng, đọc đề từ Google Sheet
+let stStartedAt = 0; // thời điểm học sinh bắt đầu thấy câu hỏi đầu tiên (chỉ dùng cho chế độ 'remote'), để tính thời gian làm bài
+let stAttemptNumber = 1; // lần làm bài thứ mấy (đếm theo mật mã/Sheet, lưu ở localStorage của máy học sinh)
+let stRemoteApiUrl = ''; // URL Web App (NhanKetQuaLamBai.gs) đọc được từ tab "CauHinh" (nếu thầy/cô có cấu hình) trong chính Sheet đề thi, dùng để gửi kết quả
+let stRemoteSending = false;
+let stCurrentSheetId = ''; // ID Google Sheet của lần làm bài hiện tại (chế độ 'remote'), lưu lại để "Làm lại" tính đúng lần làm bài thứ mấy
 
 function buildSelfTestSlides(){
   const arr = [];
@@ -2225,6 +2255,11 @@ function restartSelfTest(){
   if(!confirm('Làm lại từ đầu? Toàn bộ lựa chọn hiện tại sẽ bị xoá.')) return;
   if(stMode==='remote'){
     stResetAnswers();
+    // Làm lại tính là 1 lần làm bài mới: tính lại thời gian từ đầu và tăng "lần làm bài
+    // thứ mấy" (đã lưu sẵn sheetId lúc vào bài, không cần đọc lại từ ô nhập).
+    stStartedAt = Date.now();
+    if(stCurrentSheetId) stAttemptNumber = stGetNextAttemptNumber(stCurrentSheetId);
+    stRemoteSending = false;
     document.getElementById('stStatsPanel').hidden = true;
     updateSelfTestStatsChip();
     renderSelfTestSlide();
@@ -2432,6 +2467,95 @@ function stFetchGvizJsonp(sheetId, sheetName){
   });
 }
 
+// Đếm số lần học sinh đã làm bài với cùng 1 mật mã/Sheet (lưu trên máy học sinh),
+// dùng để hiển thị "Lần làm bài thứ mấy" và ghi vào kết quả gửi về cho giáo viên.
+function stGetNextAttemptNumber(sheetId){
+  try{
+    const key = 'mathRemoteAttempt_'+sheetId;
+    const cur = parseInt(localStorage.getItem(key)||'0',10)||0;
+    const next = cur+1;
+    localStorage.setItem(key, String(next));
+    return next;
+  }catch(e){ return 1; }
+}
+
+// Đọc bảng gviz dạng 2 cột (Khoá | Giá trị) thành object key->value, không phân biệt hoa
+// thường của khoá. Dùng cho tab cấu hình "CauHinh" trong Google Sheet.
+function stGvizTableToKV(table){
+  const kv = {};
+  if(!table || !table.rows) return kv;
+  table.rows.forEach(row=>{
+    if(!row || !row.c) return;
+    const c0 = row.c[0], c1 = row.c[1];
+    const key = c0 ? String((c0.f!==undefined && c0.f!==null && c0.f!=='') ? c0.f : c0.v || '').trim() : '';
+    const val = c1 ? String((c1.f!==undefined && c1.f!==null && c1.f!=='') ? c1.f : c1.v || '').trim() : '';
+    if(key) kv[key.toLowerCase()] = val;
+  });
+  return kv;
+}
+
+// Dò tìm (không bắt buộc) URL Web App nhận kết quả, đọc từ tab "CauHinh" (nếu giáo viên có
+// cấu hình) trong chính Sheet đề thi — hàng "ApiUrl | <URL Web App>". Không chặn/không làm
+// gián đoạn luồng chính nếu không tìm thấy hoặc lỗi.
+function stFetchRemoteApiUrl(sheetId){
+  return stFetchGvizJsonp(sheetId, 'CauHinh').then(resp=>{
+    if(!resp || !resp.table) return;
+    const kv = stGvizTableToKV(resp.table);
+    const url = kv['apiurl'] || kv['api url'] || kv['url'] || kv['weburl'] || kv['web app url'] || '';
+    if(url) stRemoteApiUrl = url;
+  }).catch(()=>{});
+}
+
+// Số giây đã làm bài, tính từ lúc học sinh thấy câu hỏi đầu tiên (chế độ 'remote').
+function stElapsedSeconds(){
+  return Math.max(0, Math.round((Date.now()-(stStartedAt||Date.now()))/1000));
+}
+function stFormatThoiGianStr(giay){
+  giay = Math.max(0, Math.round(giay||0));
+  const p = Math.floor(giay/60), g = giay%60;
+  return p+' phút '+(g<10?'0':'')+g+' giây';
+}
+
+// Gửi kết quả làm bài về cho giáo viên qua Web App (NhanKetQuaLamBai.gs), theo đúng cấu
+// trúc payload mà quiz-lam-bai.html đã dùng, chỉ khác là có thêm "lop".
+function stSendResultToTeacher(){
+  if(stRemoteSending || !stRemoteApiUrl) return;
+  stRemoteSending = true;
+  const noteEl = document.getElementById('rsSendNote');
+  const btnEl = document.getElementById('rsSendBtn');
+  if(btnEl){ btnEl.disabled = true; btnEl.textContent = 'Đang gửi...'; }
+  if(noteEl){ noteEl.textContent = ''; noteEl.className = 'rs-send-note'; }
+  const payload = {
+    hoTen: stStudentName,
+    lop: stStudentClass,
+    soCauDung: stCorrectItems(),
+    tongSoCau: stTotalItems(),
+    thoiGianGiay: stElapsedSeconds(),
+    lanLamBai: stAttemptNumber,
+    ghiChu: stStudentClass,
+    chiTiet: []
+  };
+  try{
+    fetch(stRemoteApiUrl, {
+      method: 'POST', mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload)
+    }).then(()=>{
+      stRemoteSending = false;
+      if(btnEl){ btnEl.disabled = true; btnEl.textContent = '✅ Đã gửi kết quả'; }
+      if(noteEl){ noteEl.textContent = 'Kết quả đã được gửi về cho giáo viên.'; noteEl.className = 'rs-send-note rs-send-ok'; }
+    }).catch(()=>{
+      stRemoteSending = false;
+      if(btnEl){ btnEl.disabled = false; btnEl.textContent = '📤 Gửi kết quả cho thầy/cô'; }
+      if(noteEl){ noteEl.textContent = 'Không gửi được kết quả (có thể do mất mạng) — hãy thử lại hoặc chụp lại màn hình này.'; noteEl.className = 'rs-send-note rs-send-err'; }
+    });
+  }catch(e){
+    stRemoteSending = false;
+    if(btnEl){ btnEl.disabled = false; btnEl.textContent = '📤 Gửi kết quả cho thầy/cô'; }
+    if(noteEl){ noteEl.textContent = 'Không gửi được kết quả — hãy thử lại hoặc chụp lại màn hình này.'; noteEl.className = 'rs-send-note rs-send-err'; }
+  }
+}
+
 function startRemoteSelfTest(passwordRaw, name, cls){
   const sheetId = stExtractSheetId(passwordRaw);
   if(!sheetId || sheetId.length < 10){ showGateStudentError('Mật mã làm bài không hợp lệ. Hãy kiểm tra lại (dán đúng ID hoặc link Google Sheet do thầy/cô cung cấp).'); return; }
@@ -2467,6 +2591,12 @@ function startRemoteSelfTest(passwordRaw, name, cls){
       stStudentClass = cls;
       stStarted = true;
       stMode = 'remote';
+      stStartedAt = Date.now(); // tính thời gian làm bài từ lúc thấy câu hỏi đầu tiên, không tính thời gian tải đề
+      stCurrentSheetId = sheetId;
+      stAttemptNumber = stGetNextAttemptNumber(sheetId);
+      stRemoteApiUrl = '';
+      stRemoteSending = false;
+      stFetchRemoteApiUrl(sheetId); // dò tìm (không bắt buộc) nơi gửi kết quả, chạy song song, không chặn hiển thị câu hỏi
       setGateStudentLoading(false);
       document.getElementById('gateScreen').hidden = true;
       document.getElementById('selfTestScreen').hidden = false;
@@ -2664,7 +2794,20 @@ function stIsAnswered(partKey, q){
 }
 function enableSelfTestSolution(card, partKey, q){
   const solBtn = card.querySelector('.st-solution-btn');
-  if(solBtn && stIsAnswered(partKey,q)){ solBtn.disabled = false; solBtn.removeAttribute('title'); }
+  if(solBtn && stIsAnswered(partKey,q)){
+    solBtn.disabled = false; solBtn.removeAttribute('title');
+    // Chế độ học sinh (vào từ màn chào mừng, làm bài từ xa): chọn xong đáp án là lời giải
+    // tự hiện luôn, không cần bấm thêm "Xem lời giải" — chỉ áp dụng cho chế độ này; chế
+    // độ thầy/cô tự kiểm tra tại chỗ (stMode 'local') vẫn giữ hành vi bấm mới xem như cũ.
+    if(stMode==='remote') stShowSelfTestSolution(card, q);
+  }
+}
+function stShowSelfTestSolution(card, q){
+  const box = card.querySelector('.st-solution-box');
+  if(!box || !q.solution || !box.hidden) return;
+  box.innerHTML = buildSolutionBulletsHtml(q.solution);
+  box.hidden = false;
+  renderMathIn(box);
 }
 function applySelfTestTnState(optsWrap, q){
   optsWrap.classList.add('reveal');
@@ -2821,6 +2964,9 @@ function buildSelfTestCard(partKey, q, i){
     });
   }
 
+  // Quay lại 1 câu đã làm rồi (chế độ học sinh): hiện lại lời giải luôn, không cần bấm lại.
+  if(stMode==='remote' && answered) stShowSelfTestSolution(card, q);
+
   renderMathIn(card);
   return card;
 }
@@ -2841,6 +2987,9 @@ function stCorrectQuestions(){
 }
 
 function renderSelfTestStatsPanel(){
+  // Chế độ học sinh (vào từ màn chào mừng, làm từ xa): dùng bảng tổng kết hiện đại riêng,
+  // có huy hiệu/lời khen hoặc lời động viên và nút gửi kết quả cho giáo viên.
+  if(stMode==='remote'){ renderRemoteSummaryPanel(); return; }
   const panel = document.getElementById('stStatsPanel');
   const rows = [];
   selfTestData.I.forEach((q,i)=>{
@@ -2872,6 +3021,86 @@ function renderSelfTestStatsPanel(){
   rows.forEach(r=>{ html += '<div class="st-stats-row '+r.cls+'"><span>'+r.label+'</span><b>'+r.state+'</b></div>'; });
   html += '</div>';
   panel.innerHTML = html;
+}
+
+// Bảng tổng kết hiện đại dành cho học sinh (chế độ 'remote'): thẻ điểm nổi bật (huy hiệu +
+// lời khen nếu điểm ≥ 8 VÀ thời gian làm ≥ 8 phút; ngược lại — điểm dưới 8 HOẶC làm dưới
+// 8 phút — hiện lời động viên làm lại), lưới số liệu, bảng chi tiết từng câu, và nút gửi
+// kết quả về cho giáo viên (nếu Sheet có cấu hình nơi nhận ở tab "CauHinh").
+function renderRemoteSummaryPanel(){
+  const panel = document.getElementById('stStatsPanel');
+  const rows = [];
+  selfTestData.I.forEach((q,i)=>{
+    rows.push({ label:'Phần I — Câu '+(i+1), state: q._locked ? (q._correct?'✔ Đúng':'✘ Sai') : '— Chưa làm', cls: q._locked ? (q._correct?'ok':'bad') : '' });
+  });
+  selfTestData.II.forEach((q,i)=>{
+    const items = q.items||[];
+    const doneCount = items.filter(it=>it._locked).length;
+    const correctCount = items.filter(it=>it._locked && it._correct).length;
+    let state = '— Chưa làm', cls = '';
+    if(doneCount>0){
+      state = 'Đúng '+correctCount+'/'+items.length+' ý'+(doneCount<items.length?' (chưa làm hết)':'');
+      cls = correctCount===items.length ? 'ok' : (correctCount===0 ? 'bad' : 'mid');
+    }
+    rows.push({ label:'Phần II — Câu '+(i+1), state:state, cls:cls });
+  });
+  selfTestData.III.forEach((q,i)=>{
+    rows.push({ label:'Phần III — Câu '+(i+1), state: q._locked ? (q._correct?'✔ Đúng':'✘ Sai') : '— Chưa làm', cls: q._locked ? (q._correct?'ok':'bad') : '' });
+  });
+
+  const total = stTotalItems(), correct = stCorrectItems(), done = stDoneItems();
+  const wrong = done - correct;
+  const diem10 = total>0 ? Math.round((correct/total)*10*100)/100 : 0;
+  const giay = stElapsedSeconds();
+  const phutLam = giay/60;
+
+  // Cần cả 2 điều kiện (điểm ≥ 8 VÀ thời gian ≥ 8 phút) mới coi là "kết quả tốt"; thiếu 1
+  // trong 2 (điểm dưới 8, HOẶC làm dưới 8 phút dù điểm cao — có thể do làm ẩu/đoán) đều
+  // chuyển sang thẻ động viên làm lại.
+  const isGreat = diem10>=8 && phutLam>=8;
+
+  let heroHtml;
+  if(isGreat){
+    heroHtml =
+      '<div class="rs-hero rs-great">'+
+        '<div class="rs-badge-pill">🏆 Xuất sắc</div>'+
+        '<div class="rs-hero-emoji">🎉</div>'+
+        '<div class="rs-hero-score">'+diem10+'<span>/10</span></div>'+
+        (stStudentName ? '<div class="rs-hero-name">'+escapeHtml(stStudentName)+(stStudentClass?' — Lớp '+escapeHtml(stStudentClass):'')+'</div>' : '')+
+        '<div class="rs-hero-msg">Làm rất tốt! Em đã nắm chắc kiến thức phần này. Tiếp tục phát huy nhé! 👏</div>'+
+      '</div>';
+  } else {
+    const lyDo = diem10<8 && phutLam<8 ? 'điểm chưa cao và làm hơi nhanh' : (diem10<8 ? 'điểm chưa đạt 8' : 'làm hơi nhanh, nên xem lại các câu đã đoán');
+    heroHtml =
+      '<div class="rs-hero rs-retry">'+
+        '<div class="rs-badge-pill">💪 Cố gắng thêm</div>'+
+        '<div class="rs-hero-emoji">📚</div>'+
+        '<div class="rs-hero-score">'+diem10+'<span>/10</span></div>'+
+        (stStudentName ? '<div class="rs-hero-name">'+escapeHtml(stStudentName)+(stStudentClass?' — Lớp '+escapeHtml(stStudentClass):'')+'</div>' : '')+
+        '<div class="rs-hero-msg">Em '+lyDo+'. Hãy xem lại lời giải các câu sai rồi làm lại để đạt kết quả tốt hơn nhé! 💪</div>'+
+      '</div>';
+  }
+
+  const statsGridHtml =
+    '<div class="rs-stats-grid">'+
+      '<div class="rs-stat"><div class="rs-stat-value" style="color:var(--green1)">'+correct+'</div><div class="rs-stat-label">Câu đúng</div></div>'+
+      '<div class="rs-stat"><div class="rs-stat-value" style="color:var(--red1)">'+wrong+'</div><div class="rs-stat-label">Câu sai</div></div>'+
+      '<div class="rs-stat"><div class="rs-stat-value">'+stFormatThoiGianStr(giay)+'</div><div class="rs-stat-label">Thời gian làm</div></div>'+
+      '<div class="rs-stat"><div class="rs-stat-value">'+stAttemptNumber+'</div><div class="rs-stat-label">Lần làm thứ</div></div>'+
+    '</div>';
+
+  let breakdownHtml = '<div class="rs-breakdown"><div class="st-stats-rows">';
+  rows.forEach(r=>{ breakdownHtml += '<div class="st-stats-row '+r.cls+'"><span>'+r.label+'</span><b>'+r.state+'</b></div>'; });
+  breakdownHtml += '</div></div>';
+
+  const sendHtml = stRemoteApiUrl
+    ? '<div class="rs-send-wrap"><button type="button" class="btn btn-primary rs-send-btn" id="rsSendBtn">📤 Gửi kết quả cho thầy/cô</button><div class="rs-send-note" id="rsSendNote"></div></div>'
+    : '<div class="rs-send-wrap"><div class="rs-send-note">Lưu ý: mật mã này chưa được thầy/cô cấu hình nơi nhận kết quả, nên kết quả chỉ hiển thị tại đây — hãy chụp lại màn hình nếu cần nộp lại cho thầy/cô.</div></div>';
+
+  panel.innerHTML = '<div class="rs-summary">'+heroHtml+statsGridHtml+breakdownHtml+sendHtml+'</div>';
+
+  const sendBtn = document.getElementById('rsSendBtn');
+  if(sendBtn) sendBtn.addEventListener('click', stSendResultToTeacher);
 }
 
 function openSelfTestStatsPanel(){
