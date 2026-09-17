@@ -2326,7 +2326,10 @@ function stExtractSheetId(input){
 // mở qua http(s), nhưng có thể bị trình duyệt chặn khi trang được mở trực tiếp từ máy
 // (đường dẫn "file://"), nên chỉ dùng làm phương án dự phòng (xem stFetchGvizJsonp).
 function stFetchGvizCsv(sheetId, sheetName){
-  let url = 'https://docs.google.com/spreadsheets/d/'+encodeURIComponent(sheetId)+'/gviz/tq?tqx=out:csv';
+  // headers=1: ép Google nhận đúng dòng đầu là tiêu đề cột — nếu không có tham số này,
+  // với một số Sheet việc tự động dò dòng tiêu đề có thể sai, khiến tên cột đọc được bị
+  // lẫn cả dữ liệu, làm app không khớp được tên cột và báo "chưa tìm thấy câu hỏi nào".
+  let url = 'https://docs.google.com/spreadsheets/d/'+encodeURIComponent(sheetId)+'/gviz/tq?tqx=out:csv&headers=1';
   if(sheetName) url += '&sheet='+encodeURIComponent(sheetName);
   return fetch(url).then(resp=>{
     if(!resp.ok) return null;
@@ -2408,12 +2411,19 @@ function stFetchGvizJsonp(sheetId, sheetName){
       resolve(result);
     };
     window[cbName] = function(resp){ finish((resp && resp.status==='ok' && resp.table) ? resp : null); };
+    // QUAN TRỌNG: tham số "tqx" của Google phải viết đúng dạng "key:value" nối nhau bằng
+    // dấu ";" (vd "out:json;responseHandler:tenHam"), và toàn bộ giá trị này PHẢI được mã
+    // hoá URL (encodeURIComponent) — nếu để dấu ";"/":" thô trong URL, có trường hợp bị
+    // hiểu sai dọc đường nên Google không nhận ra "responseHandler" và trả về hàm callback
+    // mặc định của Google (không phải hàm của app) khiến app chờ mãi không có phản hồi rồi
+    // báo lỗi dù Sheet hoàn toàn hợp lệ. headers=1: ép nhận đúng dòng đầu là tiêu đề cột.
+    const tqxValue = 'out:json;responseHandler:'+cbName;
     let url = 'https://docs.google.com/spreadsheets/d/'+encodeURIComponent(sheetId)+
-      '/gviz/tq?tqx=out:json;responseHandler='+cbName;
+      '/gviz/tq?tqx='+encodeURIComponent(tqxValue)+'&headers=1';
     if(sheetName) url += '&sheet='+encodeURIComponent(sheetName);
     script.src = url;
     script.onerror = ()=>finish(null);
-    timer = setTimeout(()=>finish(null), 12000);
+    timer = setTimeout(()=>finish(null), 8000);
     document.head.appendChild(script);
   });
 }
