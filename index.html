@@ -498,6 +498,9 @@
     .slide-counter{padding:7px 12px;font-size:.78rem;}
     .nav-arrow{width:32px;height:32px;}
     .q-badge{padding:6px 12px;font-size:.9em;}
+    .q-head{flex-direction:column;align-items:flex-start;gap:6px;}
+    .q-stem{padding-top:0;}
+    .qed-title-label{display:none;}
     .setup-wrap{padding:20px 10px 150px;}
     .q-body{flex-direction:column;}
     .options.grid2{grid-template-columns:1fr;}
@@ -968,7 +971,7 @@
 <!-- ============= TỰ KIỂM TRA ============= -->
 <div id="selfTestScreen" hidden>
   <div class="qed-topbar">
-    <div class="qed-topbar-title">🧪 Tự kiểm tra <span class="qed-topbar-count" id="stNameChip" hidden></span> <span class="qed-topbar-count" id="stStatsChip">Đã làm: 0/0</span></div>
+    <div class="qed-topbar-title"><span class="qed-title-label">🧪 Tự kiểm tra</span> <span class="qed-topbar-count" id="stNameChip" hidden></span> <span class="qed-topbar-count" id="stStatsChip">Đã làm: 0/0</span></div>
     <div class="qed-topbar-actions">
       <button class="btn btn-outline btn-sm" id="btnSelfTestStats">📊 Xem thống kê</button>
       <button class="btn btn-outline btn-sm" id="btnSelfTestRestart">🔄 Làm lại</button>
@@ -2205,6 +2208,7 @@ function closeSelfTest(){
     if(nameInput) nameInput.value = '';
     switchGateTab('student');
     document.getElementById('gateScreen').hidden = false;
+    try{ if(document.fullscreenElement) document.exitFullscreen().catch(()=>{}); }catch(e){}
   } else {
     document.getElementById('setupScreen').hidden = false;
   }
@@ -2471,6 +2475,7 @@ function startRemoteSelfTest(passwordRaw, name, cls){
       updateSelfTestHeaderName();
       renderSelfTestSlide();
       window.scrollTo(0,0);
+      stTryFullscreen(); // gọi lại lần nữa phòng khi lần gọi lúc bấm nút bị trình duyệt bỏ qua
     }).catch(err=>{
       setGateStudentLoading(false);
       let msg = 'Không tải được đề bài. Kiểm tra kết nối mạng rồi thử lại.';
@@ -2519,6 +2524,22 @@ function setGateStudentLoading(loading){
   btn.textContent = loading ? '⏳ Đang tải đề...' : '🚀 Vào làm bài';
 }
 
+// Yêu cầu trình duyệt chuyển sang toàn màn hình (thường dùng trên điện thoại của học
+// sinh khi bắt đầu làm bài, để tránh vướng thanh địa chỉ/thanh điều hướng). Trình duyệt
+// chỉ cho phép việc này khi được gọi ngay trong 1 thao tác chạm/bấm của người dùng, nên
+// hàm này được gọi ở cả 2 chỗ: ngay khi bấm "Vào làm bài" (chắc chắn nhất) và lại lần nữa
+// sau khi tải xong đề (phòng khi lần gọi đầu bị trình duyệt bỏ qua). Một số trình duyệt
+// (đặc biệt Safari trên iPhone) không hỗ trợ toàn màn hình cho trang web thông thường —
+// khi đó lệnh này sẽ tự động không có tác dụng gì (không báo lỗi).
+function stTryFullscreen(){
+  try{
+    const el = document.documentElement;
+    if(!document.fullscreenElement && el.requestFullscreen){
+      el.requestFullscreen().catch(()=>{});
+    }
+  }catch(e){}
+}
+
 function initGateScreen(){
   document.getElementById('gateTabStudent').addEventListener('click', ()=>switchGateTab('student'));
   document.getElementById('gateTabTeacher').addEventListener('click', ()=>switchGateTab('teacher'));
@@ -2531,6 +2552,7 @@ function initGateScreen(){
     const cls = document.getElementById('gateClass').value.trim();
     const pw = document.getElementById('gatePassword').value.trim();
     if(!name || !cls || !pw){ showGateStudentError('Vui lòng nhập đủ họ tên, lớp và mật mã làm bài.'); return; }
+    stTryFullscreen(); // gọi ngay trong thao tác bấm để trình duyệt (nhất là trên điện thoại) chấp nhận
     startRemoteSelfTest(pw, name, cls);
   });
   ['gateName','gateClass','gatePassword'].forEach(id=>{
