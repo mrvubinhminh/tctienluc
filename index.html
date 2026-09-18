@@ -63,6 +63,9 @@
   .auto-result-line{font-size:.84rem;padding:7px 12px;border-radius:8px;margin-top:6px;font-weight:600;}
   .auto-result-line.ok{background:#eafaf0;color:var(--green1);}
   .auto-result-line.warn{background:#fff7ec;color:#b06a12;}
+  .teacher-sheet-import-card{display:flex;flex-direction:column;gap:8px;}
+  .teacher-sheet-import-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .teacher-sheet-import-row .qed-input{flex:1;min-width:220px;}
   .global-row{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;}
   .field{display:flex;flex-direction:column;gap:5px;}
   .field label{font-size:.78rem;font-weight:700;color:var(--ink-soft);}
@@ -725,7 +728,7 @@
   <div class="gate-wrap">
     <div class="gate-hero">
       <div class="gate-hero-emoji">📐</div>
-      <h1 class="gate-title">Thầy Lực chào mừng các em tham gia thử thách này!</h1>
+      <h1 class="gate-title">Lớp Toán Thầy Lực chào mừng các em!</h1>
     </div>
     <div class="gate-tabs">
       <button type="button" class="gate-tab active" id="gateTabStudent">🧑‍🎓 Học sinh</button>
@@ -737,7 +740,8 @@
       <label class="qed-flabel" for="gateClass">Lớp</label>
       <input type="text" id="gateClass" class="qed-input" placeholder="VD: 10A1">
       <label class="qed-flabel" for="gatePassword">Mật mã làm bài (thầy/cô cung cấp)</label>
-      <input type="text" id="gatePassword" class="qed-input" placeholder="Nhập mật mã...">
+      <input type="text" id="gatePassword" class="qed-input" list="gateCodeHistoryList" placeholder="Nhập mật mã...">
+      <datalist id="gateCodeHistoryList"></datalist>
       <div class="gate-error" id="gateStudentError" hidden></div>
       <button type="button" class="btn btn-primary" id="btnGateStudentGo" style="margin-top:14px;">🚀 Vào làm bài</button>
     </div>
@@ -786,6 +790,20 @@
           <button class="btn btn-primary btn-sm" data-action="saveLink" data-section="BAITAP" type="button">💾 Lưu</button>
         </div>
       </div>
+    </div>
+
+    <div class="global-card teacher-sheet-import-card">
+      <div class="auto-upload-icon">🔗📄</div>
+      <div class="auto-upload-text">
+        <b>Hoặc nhập câu hỏi bằng ID/link Google Sheet</b>
+        <button class="info-toggle" id="btnTeacherSheetInfo" type="button" title="Xem chi tiết định dạng Sheet">ⓘ</button>
+        <div class="hint" id="teacherSheetImportHint" hidden>Dùng đúng ID/link Google Sheet mà thầy/cô đã dùng làm "mật mã làm bài" cho học sinh (sheet tên "NganHangCauHoi", đã chia sẻ "Bất kỳ ai có đường liên kết – Người xem") — câu hỏi sẽ được tải thẳng vào các Phần I/II/III bên dưới, giống như tải file Excel.</div>
+      </div>
+      <div class="teacher-sheet-import-row">
+        <input type="text" id="teacherSheetIdInput" class="qed-input" placeholder="Dán ID hoặc link Google Sheet đề bài...">
+        <button class="btn btn-primary btn-sm" id="btnTeacherSheetImport" type="button">📥 Tải câu hỏi</button>
+      </div>
+      <div class="auto-upload-result" id="teacherSheetImportResult"></div>
     </div>
 
     <div class="global-card">
@@ -1147,6 +1165,7 @@
       <button class="icon-btn" id="btnCalc" title="Máy tính MathDA">🧮</button>
       <button class="icon-btn" id="btnBoard" title="Bảng viết">📝</button>
       <button class="icon-btn" id="btnClassroom" title="Quản lý lớp học">🏫</button>
+      <button class="icon-btn" id="btnStudentApp" title="Học sinh">🧑‍🎓</button>
       <button class="icon-btn" id="btnThemeMode" title="Chế độ hiển thị: Sáng / Tối / Hình nền">☀️</button>
       <input type="file" id="themeBgFileInput" accept="image/*" style="display:none">
       <button class="icon-btn" id="btnOptLayout" title="Bố cục phương án A,B,C,D">🔳</button>
@@ -1802,6 +1821,93 @@ function renderAutoResult(summary){
   resultBox.innerHTML = html;
 }
 
+/* ---- nhập câu hỏi bằng ID/link Google Sheet (giáo viên) — dùng lại đúng ID/link mà học
+   sinh dán làm "mật mã làm bài" ở màn chào mừng, đọc qua kỹ thuật JSONP/CSV gviz đã có sẵn
+   (stExtractSheetId/stFetchGvizJsonp/stFetchGvizCsv, định nghĩa ở phần "TỰ KIỂM TRA TỪ XA"
+   bên dưới — các function này được hoisted nên gọi trước vị trí định nghĩa vẫn hoạt động
+   bình thường), rồi đưa thẳng vào deck.parts qua đúng ingestUnifiedRows() như khi tải Excel. */
+function stGvizTableToRows(table){
+  if(!table || !table.cols) return [];
+  const headers = table.cols.map(c=>String((c && c.label) || '').trim());
+  const rows = [];
+  (table.rows||[]).forEach(row=>{
+    if(!row || !row.c) return;
+    const obj = {};
+    headers.forEach((h,i)=>{
+      if(!h) return;
+      const cell = row.c[i];
+      let v = '';
+      if(cell){ v = (cell.f!==undefined && cell.f!==null && cell.f!=='') ? cell.f : cell.v; }
+      obj[h] = (v===null || v===undefined) ? '' : v;
+    });
+    rows.push(obj);
+  });
+  return rows;
+}
+function stCsvTextToRows(csvText){
+  const table = stParseCSV(csvText);
+  if(!table.length) return [];
+  const headers = table[0].map(h=>String(h||'').trim());
+  const rows = [];
+  for(let i=1;i<table.length;i++){
+    const r = table[i];
+    const obj = {};
+    headers.forEach((h,ci)=>{ if(h) obj[h] = (r[ci]!==undefined ? r[ci] : ''); });
+    rows.push(obj);
+  }
+  return rows;
+}
+function renderTeacherSheetImportResult(s){
+  const resultBox = document.getElementById('teacherSheetImportResult');
+  const names = {I:'Phần I (Trắc nghiệm)', II:'Phần II (Đúng-Sai)', III:'Phần III (Trả lời ngắn)'};
+  let html = '';
+  ['I','II','III'].forEach(t=>{
+    if(s[t]>0) html += '<div class="auto-result-line ok">✅ Nhận diện '+names[t]+': +'+s[t]+' câu</div>';
+  });
+  if(s.skipped>0) html += '<div class="auto-result-line warn">⚠️ Bỏ qua '+s.skipped+' dòng thiếu Nội dung hoặc Loại không hợp lệ.</div>';
+  if(!html) html = '<div class="auto-result-line warn">⚠️ Không tìm thấy câu hỏi hợp lệ trong Sheet này.</div>';
+  resultBox.innerHTML = html;
+}
+function handleTeacherSheetImport(){
+  const input = document.getElementById('teacherSheetIdInput');
+  const resultBox = document.getElementById('teacherSheetImportResult');
+  const btn = document.getElementById('btnTeacherSheetImport');
+  const sheetId = stExtractSheetId(input.value);
+  if(!sheetId || sheetId.length < 10){
+    resultBox.innerHTML = '<div class="auto-result-line warn">⚠️ ID/link Google Sheet không hợp lệ. Hãy dán đúng ID hoặc link chia sẻ Sheet.</div>';
+    return;
+  }
+  const oldText = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Đang tải...';
+  resultBox.innerHTML = '<div class="auto-result-line">⏳ Đang tải câu hỏi từ Google Sheet...</div>';
+
+  stFetchGvizJsonp(sheetId, 'NganHangCauHoi')
+    .then(resp => resp ? resp : stFetchGvizJsonp(sheetId, null))
+    .then(resp => {
+      if(resp) return stGvizTableToRows(resp.table);
+      return stFetchGvizCsv(sheetId, 'NganHangCauHoi')
+        .then(text => text ? text : stFetchGvizCsv(sheetId, null))
+        .then(text => text ? stCsvTextToRows(text) : null);
+    })
+    .then(rows=>{
+      btn.disabled = false; btn.textContent = oldText;
+      if(!rows || !rows.length){
+        resultBox.innerHTML = '<div class="auto-result-line warn">⚠️ Không đọc được Sheet này. Kiểm tra lại ID/link và việc chia sẻ "Bất kỳ ai có đường liên kết – Người xem".</div>';
+        return;
+      }
+      const s = ingestUnifiedRows(rows);
+      if(s.I+s.II+s.III===0){ renderTeacherSheetImportResult(s); return; }
+      saveDeck();
+      updatePreview('I'); updatePreview('II'); updatePreview('III'); updateTotal();
+      renderTeacherSheetImportResult(s);
+      input.value = '';
+    })
+    .catch(()=>{
+      btn.disabled = false; btn.textContent = oldText;
+      resultBox.innerHTML = '<div class="auto-result-line warn">⚠️ Có lỗi khi tải câu hỏi từ Sheet. Vui lòng thử lại.</div>';
+    });
+}
+
 /* ---- template download ---- */
 function downloadTemplate(partKey){
   if(typeof XLSX === 'undefined'){
@@ -2075,6 +2181,20 @@ function initSetupScreen(){
     if(e.dataTransfer.files && e.dataTransfer.files.length) handleAutoFiles(e.dataTransfer.files);
   });
 
+  const teacherSheetInfoBtn = document.getElementById('btnTeacherSheetInfo');
+  if(teacherSheetInfoBtn){
+    teacherSheetInfoBtn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const hint = document.getElementById('teacherSheetImportHint');
+      hint.hidden = !hint.hidden;
+      teacherSheetInfoBtn.classList.toggle('active', !hint.hidden);
+    });
+  }
+  document.getElementById('btnTeacherSheetImport').addEventListener('click', handleTeacherSheetImport);
+  document.getElementById('teacherSheetIdInput').addEventListener('keydown', e=>{
+    if(e.key==='Enter') handleTeacherSheetImport();
+  });
+
   document.querySelectorAll('[data-action="upload"]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const part = btn.getAttribute('data-part');
@@ -2249,6 +2369,12 @@ function stResetAnswers(){
   selfTestData.I.forEach(q=>{ q._locked=false; q._selected=-1; q._correct=false; });
   selfTestData.II.forEach(q=>(q.items||[]).forEach(it=>{ it._locked=false; it._selected=null; it._correct=false; }));
   selfTestData.III.forEach(q=>{ q._locked=false; q._typed=''; q._correct=false; });
+  // Xáo trộn lại thứ tự câu hỏi mỗi lần "Làm lại" (theo từng phần riêng biệt), để mỗi lần
+  // làm lại ra thứ tự khác nhau — không chỉ lần vào đầu tiên.
+  selfTestData.I = shuffleArrayCopy(selfTestData.I);
+  selfTestData.II = shuffleArrayCopy(selfTestData.II);
+  selfTestData.III = shuffleArrayCopy(selfTestData.III);
+  stSlides = buildSelfTestSlides();
   stCurrentSlide = 0;
 }
 function restartSelfTest(){
@@ -2580,6 +2706,12 @@ function startRemoteSelfTest(passwordRaw, name, cls){
       const bank = result && result.bank;
       if(!bank) throw new Error('not_shared');
       if(!bank.I.length && !bank.II.length && !bank.III.length) throw new Error('empty');
+      // Xáo trộn thứ tự câu hỏi ngẫu nhiên theo từng phần (I/II/III riêng biệt) — mỗi lần
+      // học sinh vào làm bài (kể cả "Làm lại") sẽ ra một thứ tự khác nhau, hạn chế chép bài
+      // theo thứ tự cố định giữa các bạn/các lần làm.
+      bank.I = shuffleArrayCopy(bank.I);
+      bank.II = shuffleArrayCopy(bank.II);
+      bank.III = shuffleArrayCopy(bank.III);
       selfTestData = {
         I: bank.I.map(q=>Object.assign({}, q, { _locked:false, _selected:-1, _correct:false })),
         II: bank.II.map(q=>Object.assign({}, q, { items:(q.items||[]).map(it=>Object.assign({}, it, { _locked:false, _selected:null, _correct:false })) })),
@@ -2591,6 +2723,8 @@ function startRemoteSelfTest(passwordRaw, name, cls){
       stStudentClass = cls;
       stStarted = true;
       stMode = 'remote';
+      saveGateCodeHistory(passwordRaw); // chỉ nhớ mật mã khi đã chắc chắn tải đề THÀNH CÔNG
+      stPlaySound('start'); // âm thanh mở đầu, báo hiệu mật mã hợp lệ và bắt đầu làm bài
       stStartedAt = Date.now(); // tính thời gian làm bài từ lúc thấy câu hỏi đầu tiên, không tính thời gian tải đề
       stCurrentSheetId = sheetId;
       stAttemptNumber = stGetNextAttemptNumber(sheetId);
@@ -2625,6 +2759,35 @@ function isTeacherUnlocked(){ try{ return localStorage.getItem(TEACHER_UNLOCK_KE
 function setTeacherUnlocked(){ try{ localStorage.setItem(TEACHER_UNLOCK_KEY,'1'); }catch(e){} }
 function clearTeacherUnlocked(){ try{ localStorage.removeItem(TEACHER_UNLOCK_KEY); }catch(e){} }
 
+// Nhớ lại các mật mã (ID/link Google Sheet) học sinh đã dùng THÀNH CÔNG trên chính máy này,
+// để gợi ý điền lại lần sau (không cần chép tay mỗi lần) — dùng <datalist> gắn vào ô nhập,
+// trình duyệt sẽ tự hiện gợi ý ngay khi học sinh gõ. Chỉ nhớ tối đa 8 mã gần nhất, mới nhất
+// lên đầu; không lưu nếu lấy đề thất bại (tránh gợi ý mã sai/gõ nhầm).
+const GATE_CODE_HISTORY_KEY = 'mathGateCodeHistory';
+const GATE_CODE_HISTORY_MAX = 8;
+function loadGateCodeHistory(){
+  try{
+    const arr = JSON.parse(localStorage.getItem(GATE_CODE_HISTORY_KEY) || '[]');
+    return Array.isArray(arr) ? arr.filter(v=>typeof v==='string' && v) : [];
+  }catch(e){ return []; }
+}
+function saveGateCodeHistory(value){
+  value = String(value||'').trim();
+  if(!value) return;
+  try{
+    let arr = loadGateCodeHistory().filter(v=>v!==value);
+    arr.unshift(value);
+    if(arr.length > GATE_CODE_HISTORY_MAX) arr = arr.slice(0, GATE_CODE_HISTORY_MAX);
+    localStorage.setItem(GATE_CODE_HISTORY_KEY, JSON.stringify(arr));
+  }catch(e){}
+  renderGateCodeHistoryDatalist();
+}
+function renderGateCodeHistoryDatalist(){
+  const dl = document.getElementById('gateCodeHistoryList');
+  if(!dl) return;
+  dl.innerHTML = loadGateCodeHistory().map(v=>'<option value="'+escapeHtml(v)+'"></option>').join('');
+}
+
 function teacherLogout(){
   if(!confirm('Đăng xuất khỏi trang giáo viên? Lần sau vào sẽ phải nhập lại mật khẩu.')) return;
   clearTeacherUnlocked();
@@ -2644,7 +2807,10 @@ function switchGateTab(which){
   document.getElementById('gateStudentPanel').hidden = !isStudent;
   document.getElementById('gateTeacherPanel').hidden = isStudent;
 }
-function showGateStudentError(msg){ const el=document.getElementById('gateStudentError'); el.textContent=msg; el.hidden=false; }
+function showGateStudentError(msg){
+  const el=document.getElementById('gateStudentError'); el.textContent=msg; el.hidden=false;
+  stPlayAnswerFeedback(false); // âm thanh "sai" + rung, giống hệt khi làm bài — báo hiệu mật mã/thao tác chưa đúng
+}
 function hideGateStudentError(){ document.getElementById('gateStudentError').hidden = true; }
 function showGateTeacherError(msg){ const el=document.getElementById('gateTeacherError'); el.textContent=msg; el.hidden=false; }
 function hideGateTeacherError(){ document.getElementById('gateTeacherError').hidden = true; }
@@ -2675,6 +2841,7 @@ function initGateScreen(){
   document.getElementById('gateTabTeacher').addEventListener('click', ()=>switchGateTab('teacher'));
   const logoutBtn = document.getElementById('btnTeacherLogout');
   if(logoutBtn) logoutBtn.addEventListener('click', teacherLogout);
+  renderGateCodeHistoryDatalist(); // gợi ý các mật mã (ID Sheet) đã dùng thành công trên máy này
 
   document.getElementById('btnGateStudentGo').addEventListener('click', ()=>{
     hideGateStudentError();
@@ -2784,6 +2951,40 @@ function doStartSelfTest(){
   stStarted = true;
   updateSelfTestHeaderName();
   renderSelfTestSlide();
+  stPlaySound('start');
+}
+
+// Hiệu ứng âm thanh + rung khi học sinh chọn đáp án trong "Tự kiểm tra" ("start": phát
+// ngay khi bắt đầu làm bài — câu hỏi đầu tiên vừa hiện ra; đúng: tiếng "Trả lời đúng";
+// sai: tiếng "Trả lời sai" + rung máy — chỉ có tác dụng trên Android, iOS Safari không hỗ
+// trợ Vibration API cho trang web thường; "Tổng kết" phát khi mở bảng tổng kết). Tải âm
+// thanh (Audio object) LƯỜI — chỉ tạo khi thực sự cần phát lần đầu, để không tốn băng
+// thông của học sinh nếu họ không làm bài. play() có thể bị trình duyệt chặn nếu chưa có
+// tương tác nào từ người dùng — bắt lỗi và bỏ qua lặng lẽ trong trường hợp đó, không ảnh
+// hưởng đến việc làm bài.
+const ST_SOUND_URLS = {
+  start: 'https://files.catbox.moe/gu2m6v.mp3',
+  correct: 'https://files.catbox.moe/ctls2d.mp3',
+  wrong: 'https://files.catbox.moe/yfevsa.mp3',
+  summary: 'https://files.catbox.moe/w9ypru.mp3'
+};
+const stSoundCache = {};
+function stPlaySound(kind){
+  try{
+    const url = ST_SOUND_URLS[kind];
+    if(!url) return;
+    let audio = stSoundCache[kind];
+    if(!audio){ audio = new Audio(url); stSoundCache[kind] = audio; }
+    audio.currentTime = 0;
+    audio.play().catch(()=>{});
+  }catch(e){}
+}
+function stVibrateWrong(){
+  try{ if(navigator.vibrate) navigator.vibrate(200); }catch(e){}
+}
+function stPlayAnswerFeedback(isCorrect){
+  if(isCorrect) stPlaySound('correct');
+  else { stPlaySound('wrong'); stVibrateWrong(); }
 }
 
 // "Xem lời giải" chỉ được bấm sau khi đã chọn phương án (Phần I/III: đã khoá 1 lần chọn;
@@ -2905,6 +3106,7 @@ function buildSelfTestCard(partKey, q, i){
         if(q._locked) return;
         q._locked = true; q._selected = idx; q._correct = (idx===q.correctIndex);
         applySelfTestTnState(optsWrap, q);
+        stPlayAnswerFeedback(q._correct);
         enableSelfTestSolution(card, partKey, q);
         updateSelfTestStatsChip();
       });
@@ -2924,6 +3126,7 @@ function buildSelfTestCard(partKey, q, i){
           const val = btn.getAttribute('data-val')==='true';
           it._locked = true; it._selected = val; it._correct = (val===it.correct);
           applySelfTestDsState(row, it);
+          stPlayAnswerFeedback(it._correct);
           if(stIsAnswered('II', q)) enableSelfTestSolution(card, partKey, q);
           updateSelfTestStatsChip();
         });
@@ -2941,6 +3144,7 @@ function buildSelfTestCard(partKey, q, i){
       if(!val){ input.focus(); return; }
       q._locked = true; q._typed = val; q._correct = stSoSanhDapAnNgan(val, q.answer);
       applySelfTestTlnState(input, confirmBtn, note, q);
+      stPlayAnswerFeedback(q._correct);
       enableSelfTestSolution(card, partKey, q);
       updateSelfTestStatsChip();
     };
@@ -3107,6 +3311,7 @@ function openSelfTestStatsPanel(){
   document.getElementById('stStatsPanel').hidden = false;
   renderSelfTestStatsPanel();
   document.getElementById('stStatsPanel').scrollIntoView({ behavior:'smooth', block:'start' });
+  stPlaySound('summary');
 }
 function toggleSelfTestStatsPanel(){
   const panel = document.getElementById('stStatsPanel');
@@ -4001,12 +4206,18 @@ const TOOL_DEFS = {
     url: 'https://dojovtl.vercel.app/',
     // 'fill': ứng dụng quản lý lớp học tự responsive theo khung chứa, chỉ cần lấp đầy 100%.
     mode: 'fill'
+  },
+  student: {
+    title: '🧑‍🎓 Học sinh',
+    url: 'https://dojotienluc-v1.vercel.app/',
+    // 'fill': ứng dụng học sinh tự responsive theo khung chứa, chỉ cần lấp đầy 100%.
+    mode: 'fill'
   }
 };
 const CALC_PANEL_STORAGE_KEY = 'mathCalcPanelWidthPct';
 const CALC_PANEL_DEFAULT_PCT = 50;
 let toolOpen = false;
-let activeTool = null; // 'calc' | 'board' | 'classroom' | null
+let activeTool = null; // 'calc' | 'board' | 'classroom' | 'student' | null
 
 function isDesktopSplit(){
   return window.matchMedia('(min-width:721px)').matches;
@@ -4078,6 +4289,7 @@ function syncToolButtonsActiveState(){
   document.getElementById('btnCalc').classList.toggle('active', toolOpen && activeTool==='calc');
   document.getElementById('btnBoard').classList.toggle('active', toolOpen && activeTool==='board');
   document.getElementById('btnClassroom').classList.toggle('active', toolOpen && activeTool==='classroom');
+  document.getElementById('btnStudentApp').classList.toggle('active', toolOpen && activeTool==='student');
 }
 // Trong suốt thời gian trượt (mở/đóng) panel, liên tục cập nhật canvas vẽ + tỉ lệ khung công cụ
 // để chuyển động mượt, chuyên nghiệp thay vì giật cục ở khung hình cuối.
@@ -4737,6 +4949,7 @@ function initPresentScreen(){
   document.getElementById('btnCalc').addEventListener('click', ()=>toggleTool('calc'));
   document.getElementById('btnBoard').addEventListener('click', ()=>toggleTool('board'));
   document.getElementById('btnClassroom').addEventListener('click', ()=>toggleTool('classroom'));
+  document.getElementById('btnStudentApp').addEventListener('click', ()=>toggleTool('student'));
   document.getElementById('btnCalcClose').addEventListener('click', closeToolPanel);
   initCalcResizer();
   initThemeMode();
