@@ -817,7 +817,7 @@
       <div class="auto-upload-text">
         <b>Hoặc nhập câu hỏi bằng ID/link Google Sheet</b>
         <button class="info-toggle" id="btnTeacherSheetInfo" type="button" title="Xem chi tiết định dạng Sheet">ⓘ</button>
-        <div class="hint" id="teacherSheetImportHint" hidden>Dùng đúng ID/link Google Sheet mà thầy/cô đã dùng làm "mật mã làm bài" cho học sinh (sheet tên "NganHangCauHoi", đã chia sẻ "Bất kỳ ai có đường liên kết – Người xem") — câu hỏi sẽ được tải thẳng vào các Phần I/II/III bên dưới, giống như tải file Excel.</div>
+        <div class="hint" id="teacherSheetImportHint" hidden>Dùng đúng ID/link Google Sheet mà thầy/cô đã dùng làm "mật mã làm bài" cho học sinh (sheet tên "NganHangCauHoi", đã chia sẻ "Bất kỳ ai có đường liên kết – Người xem") — câu hỏi sẽ được tải thẳng vào các Phần I/II/III bên dưới, giống như tải file Excel. Mẹo: khi học sinh làm bài từ xa, các câu được xáo trộn vị trí ngẫu nhiên theo từng phần — nếu muốn 1 câu nào đó luôn giữ đúng vị trí, không bị xáo trộn, ghi số <b>1</b> vào <b>cột L</b> (ngay sau cột "Lời giải") ở dòng câu đó trong Sheet.</div>
       </div>
       <div class="teacher-sheet-import-row">
         <input type="text" id="teacherSheetIdInput" class="qed-input" placeholder="Dán ID hoặc link Google Sheet đề bài...">
@@ -2402,10 +2402,11 @@ function stResetAnswers(){
   selfTestData.II.forEach(q=>(q.items||[]).forEach(it=>{ it._locked=false; it._selected=null; it._correct=false; }));
   selfTestData.III.forEach(q=>{ q._locked=false; q._typed=''; q._correct=false; });
   // Xáo trộn lại thứ tự câu hỏi mỗi lần "Làm lại" (theo từng phần riêng biệt), để mỗi lần
-  // làm lại ra thứ tự khác nhau — không chỉ lần vào đầu tiên.
-  selfTestData.I = shuffleArrayCopy(selfTestData.I);
-  selfTestData.II = shuffleArrayCopy(selfTestData.II);
-  selfTestData.III = shuffleArrayCopy(selfTestData.III);
+  // làm lại ra thứ tự khác nhau — không chỉ lần vào đầu tiên. Câu đánh dấu "không đảo" (cột L
+  // = 1 trong Sheet) vẫn giữ nguyên vị trí qua shuffleKeepPinned.
+  selfTestData.I = shuffleKeepPinned(selfTestData.I);
+  selfTestData.II = shuffleKeepPinned(selfTestData.II);
+  selfTestData.III = shuffleKeepPinned(selfTestData.III);
   stSlides = buildSelfTestSlides();
   stCurrentSlide = 0;
 }
@@ -2465,6 +2466,10 @@ function stParseQuestionBankFromCsv(csvText){
     dapan: col('Đáp án đúng'), loigiai: col('Lời giải')
   };
   const get = (r,i)=> (i>=0 && i<r.length) ? String(r[i]||'').trim() : '';
+  // Cột L (vị trí thứ 12, ngay sau "Lời giải") — ghi số 1 để đánh dấu câu này KHÔNG bị xáo
+  // trộn vị trí khi học sinh làm bài từ xa (giữ đúng thứ tự như trong Sheet). Đọc theo VỊ TRÍ
+  // cột (index 11, không theo tên tiêu đề) để không bắt buộc giáo viên phải đặt tên cột này.
+  const COL_KHONG_DAO = 11;
   const I=[], II=[], III=[];
   for(let i=1;i<table.length;i++){
     const r = table[i];
@@ -2475,22 +2480,23 @@ function stParseQuestionBankFromCsv(csvText){
     const a=get(r,idx.a), b=get(r,idx.b), c=get(r,idx.c), d=get(r,idx.d);
     const dapan = get(r, idx.dapan);
     const solution = get(r, idx.loigiai);
+    const noDao = get(r, COL_KHONG_DAO) === '1';
     if(/trắc nghiệm|trac nghiem/i.test(loai)){
       const letter = dapan.replace(/[^A-Da-d]/g,'').toUpperCase().charAt(0);
       const letters = ['A','B','C','D'], texts = [a,b,c,d];
       const options = [];
       letters.forEach((lab,li)=>{ if(texts[li]) options.push({ label:lab, text:texts[li] }); });
       if(options.length){
-        I.push({ stem, image, solution, options, correctIndex: letters.indexOf(letter) });
+        I.push({ stem, image, solution, options, correctIndex: letters.indexOf(letter), _noDao: noDao });
       }
     } else if(/đúng.*sai|dung.*sai/i.test(loai)){
       const dapAnDS = stPhanTichDapAnDS(dapan);
       const labels=['a','b','c','d'], texts=[a,b,c,d];
       const items = [];
       labels.forEach((lab,li)=>{ if(texts[li]) items.push({ label:lab, text:texts[li], correct:dapAnDS[lab] }); });
-      if(items.length) II.push({ stem, image, solution, items });
+      if(items.length) II.push({ stem, image, solution, items, _noDao: noDao });
     } else if(/trả lời ngắn|tra loi ngan/i.test(loai)){
-      III.push({ stem, image, solution, answer: dapan });
+      III.push({ stem, image, solution, answer: dapan, _noDao: noDao });
     }
   }
   return { I, II, III };
@@ -2560,6 +2566,10 @@ function stGvizTableToBank(table){
     const v = (cell.f !== undefined && cell.f !== null && cell.f !== '') ? cell.f : cell.v;
     return (v===null || v===undefined) ? '' : String(v).trim();
   };
+  // Cột L (vị trí thứ 12, ngay sau "Lời giải") — ghi số 1 để đánh dấu câu này KHÔNG bị xáo
+  // trộn vị trí khi học sinh làm bài từ xa (giữ đúng thứ tự như trong Sheet). Đọc theo VỊ TRÍ
+  // cột (index 11, không theo tên tiêu đề) để không bắt buộc giáo viên phải đặt tên cột này.
+  const COL_KHONG_DAO = 11;
   const I=[], II=[], III=[];
   (table.rows||[]).forEach(row=>{
     const stem = get(row, idx.noidung);
@@ -2569,20 +2579,21 @@ function stGvizTableToBank(table){
     const a=get(row,idx.a), b=get(row,idx.b), c=get(row,idx.c), d=get(row,idx.d);
     const dapan = get(row, idx.dapan);
     const solution = get(row, idx.loigiai);
+    const noDao = get(row, COL_KHONG_DAO) === '1';
     if(/trắc nghiệm|trac nghiem/i.test(loai)){
       const letter = dapan.replace(/[^A-Da-d]/g,'').toUpperCase().charAt(0);
       const letters = ['A','B','C','D'], texts = [a,b,c,d];
       const options = [];
       letters.forEach((lab,li)=>{ if(texts[li]) options.push({ label:lab, text:texts[li] }); });
-      if(options.length) I.push({ stem, image, solution, options, correctIndex: letters.indexOf(letter) });
+      if(options.length) I.push({ stem, image, solution, options, correctIndex: letters.indexOf(letter), _noDao: noDao });
     } else if(/đúng.*sai|dung.*sai/i.test(loai)){
       const dapAnDS = stPhanTichDapAnDS(dapan);
       const labels=['a','b','c','d'], texts=[a,b,c,d];
       const items = [];
       labels.forEach((lab,li)=>{ if(texts[li]) items.push({ label:lab, text:texts[li], correct:dapAnDS[lab] }); });
-      if(items.length) II.push({ stem, image, solution, items });
+      if(items.length) II.push({ stem, image, solution, items, _noDao: noDao });
     } else if(/trả lời ngắn|tra loi ngan/i.test(loai)){
-      III.push({ stem, image, solution, answer: dapan });
+      III.push({ stem, image, solution, answer: dapan, _noDao: noDao });
     }
   });
   return { I, II, III };
@@ -2742,10 +2753,11 @@ function startRemoteSelfTest(passwordRaw, name, cls){
       if(!bank.I.length && !bank.II.length && !bank.III.length) throw new Error('empty');
       // Xáo trộn thứ tự câu hỏi ngẫu nhiên theo từng phần (I/II/III riêng biệt) — mỗi lần
       // học sinh vào làm bài (kể cả "Làm lại") sẽ ra một thứ tự khác nhau, hạn chế chép bài
-      // theo thứ tự cố định giữa các bạn/các lần làm.
-      bank.I = shuffleArrayCopy(bank.I);
-      bank.II = shuffleArrayCopy(bank.II);
-      bank.III = shuffleArrayCopy(bank.III);
+      // theo thứ tự cố định giữa các bạn/các lần làm. Câu đánh dấu "không đảo" (cột L = 1
+      // trong Sheet đề) được giữ nguyên vị trí, không bị xáo trộn (shuffleKeepPinned).
+      bank.I = shuffleKeepPinned(bank.I);
+      bank.II = shuffleKeepPinned(bank.II);
+      bank.III = shuffleKeepPinned(bank.III);
       selfTestData = {
         I: bank.I.map(q=>Object.assign({}, q, { _locked:false, _selected:-1, _correct:false })),
         II: bank.II.map(q=>Object.assign({}, q, { items:(q.items||[]).map(it=>Object.assign({}, it, { _locked:false, _selected:null, _correct:false })) })),
@@ -3704,6 +3716,24 @@ function shuffleArrayCopy(arr){
     const tmp = a[i]; a[i] = a[j]; a[j] = tmp;
   }
   return a;
+}
+
+// Xáo trộn ngẫu nhiên nhưng GIỮ NGUYÊN vị trí các câu được đánh dấu "không đảo" (q._noDao ===
+// true, đọc từ cột L trong Google Sheet đề — xem stGvizTableToBank/stParseQuestionBankFromCsv).
+// Các câu còn lại (không đánh dấu) được xáo trộn ngẫu nhiên với nhau, rồi lấp vào đúng các vị
+// trí còn trống (không phải vị trí của câu bị khoá), nên câu bị khoá luôn nằm đúng thứ tự như
+// trong ngân hàng gốc còn các câu khác vẫn đổi chỗ ngẫu nhiên như bình thường.
+function shuffleKeepPinned(arr){
+  const result = arr.slice();
+  const movableIdx = [];
+  const movableItems = [];
+  arr.forEach((item,i)=>{
+    if(item && item._noDao){ /* giữ nguyên vị trí, không đưa vào danh sách xáo trộn */ }
+    else { movableIdx.push(i); movableItems.push(item); }
+  });
+  const shuffled = shuffleArrayCopy(movableItems);
+  movableIdx.forEach((i,k)=>{ result[i] = shuffled[k]; });
+  return result;
 }
 
 // Lấy danh sách câu hỏi sẽ trình chiếu cho 1 phần (I/II/III): nếu ô "Số câu trình chiếu"
